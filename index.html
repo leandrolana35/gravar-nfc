@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gravar NFC</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --txt:#1c1f24; --mut:#667085; --pri:#0b6bcb; --ok:#127a3d; --err:#b42318; --bd:#d0d5dd; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151a; --card:#1b2028; --txt:#eef0f3; --mut:#98a2b3; --pri:#4da3ff; --ok:#4cc380; --err:#ff7b72; --bd:#323a46; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--txt); font:16px/1.4 system-ui, sans-serif; }
+  main { max-width:480px; margin:0 auto; }
+  h1 { font-size:1.3rem; margin:0 0 12px; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:16px; margin-bottom:12px; }
+  label { display:block; font-weight:600; margin-bottom:6px; }
+  textarea { width:100%; min-height:110px; padding:10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--txt); font:inherit; resize:vertical; }
+  .row { display:flex; gap:8px; margin-top:12px; }
+  button { flex:1; padding:14px; border:0; border-radius:10px; font:inherit; font-weight:600; background:var(--pri); color:#fff; }
+  button.sec { background:transparent; color:var(--pri); border:1px solid var(--pri); }
+  button:disabled { opacity:.5; }
+  #status { margin-top:12px; min-height:1.4em; }
+  .ok { color:var(--ok); } .err { color:var(--err); } .mut { color:var(--mut); }
+  small { color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gravar tag NFC</h1>
+
+  <div id="aviso" class="card err" hidden></div>
+
+  <div class="card">
+    <label for="texto">Texto a gravar</label>
+    <textarea id="texto" placeholder="Digite o texto livre..."></textarea>
+    <div class="row">
+      <button id="gravar">Gravar</button>
+      <button id="ler" class="sec">Ler tag</button>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+  </div>
+
+  <p><small>Depois de tocar em um botão, encoste a parte de trás do celular na tag e mantenha parado até a confirmação.
+  Funciona no Chrome para Android, com NFC ligado, em página HTTPS. Tags NTAG213/215/216 comportam textos curtos
+  (cerca de 130, 500 e 880 caracteres).</small></p>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const status = (msg, cls = 'mut') => { $('status').className = cls; $('status').textContent = msg; };
+  let ctrl = null;
+
+  // Web NFC só existe no Chrome Android e exige contexto seguro (HTTPS).
+  if (!('NDEFReader' in window)) {
+    $('aviso').hidden = false;
+    $('aviso').textContent = window.isSecureContext
+      ? 'Este navegador não suporta NFC pela web. Use o Chrome no Android.'
+      : 'Abra esta página por HTTPS. A Web NFC não funciona em HTTP.';
+    $('gravar').disabled = $('ler').disabled = true;
+  }
+
+  function cancelar() { if (ctrl) { ctrl.abort(); ctrl = null; } }
+
+  function erro(e) {
+    const m = {
+      NotAllowedError: 'Permissão de NFC negada. Autorize o NFC para este site.',
+      NotSupportedError: 'O NFC está desligado ou não é suportado neste aparelho.',
+      NotReadableError: 'Não foi possível ler a tag. Aproxime de novo.',
+      NetworkError: 'A gravação falhou. Mantenha o celular parado sobre a tag e tente de novo.',
+      AbortError: 'Operação cancelada.'
+    };
+    status(m[e.name] || ('Erro: ' + e.message), 'err');
+  }
+
+  $('gravar').onclick = async () => {
+    const texto = $('texto').value;
+    if (!texto.trim()) return status('Digite um texto antes de gravar.', 'err');
+    cancelar();
+    ctrl = new AbortController();
+    status('Encoste o celular na tag para gravar...');
+    try {
+      await new NDEFReader().write({ records: [{ recordType: 'text', lang: 'pt', data: texto }] },
+                                   { signal: ctrl.signal, overwrite: true });
+      status('Tag gravada com sucesso.', 'ok');
+    } catch (e) { erro(e); }
+  };
+
+  $('ler').onclick = async () => {
+    cancelar();
+    ctrl = new AbortController();
+    status('Encoste o celular na tag para ler...');
+    try {
+      const r = new NDEFReader();
+      await r.scan({ signal: ctrl.signal });
+      r.onreadingerror = () => status('Não foi possível ler esta tag.', 'err');
+      r.onreading = ev => {
+        const txt = ev.message.records
+          .filter(x => x.recordType === 'text')
+          .map(x => new TextDecoder(x.encoding || 'utf-8').decode(x.data)).join('\n');
+        $('texto').value = txt;
+        status(txt ? 'Tag lida (série ' + ev.serialNumber + ').' : 'Tag sem texto (série ' + ev.serialNumber + ').', txt ? 'ok' : 'mut');
+        cancelar();
+      };
+    } catch (e) { erro(e); }
+  };
+</script>
+</body>
+</html>
